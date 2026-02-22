@@ -1,0 +1,159 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>401k Calculator — Unit Tests</title>
+    <link rel="stylesheet" href="https://code.jquery.com/qunit/qunit-2.21.0.css">
+</head>
+<body>
+    <div id="qunit"></div>
+    <div id="qunit-fixture"></div>
+
+    <script src="calculator.js"></script>
+    <script src="https://code.jquery.com/qunit/qunit-2.21.0.js"></script>
+    <script>
+        // Helper: assert two numbers are within a tolerance of each other
+        function near(assert, actual, expected, tolerance, msg) {
+            tolerance = tolerance ?? 0.01;
+            assert.ok(
+                Math.abs(actual - expected) <= tolerance,
+                (msg ?? '') + ` (expected ~${expected}, got ${actual})`
+            );
+        }
+
+        // -----------------------------------------------------------------------
+        // computeContribution
+        // -----------------------------------------------------------------------
+
+        QUnit.module('computeContribution', function () {
+            QUnit.test('typical case — no YTD, full year remaining', function (assert) {
+                // $100k salary, $0 YTD, $24,500 goal, 26 periods, all remaining
+                const r = computeContribution(100000, 0, 24500, 26, 26);
+                near(assert, r.requiredPercent, 24.5, 0.01, 'requiredPercent');
+                near(assert, r.perCheck, 942.31, 0.5, 'perCheck');
+                assert.strictEqual(r.remainingAmount, 24500, 'remainingAmount');
+                near(assert, r.remainingGrossPay, 100000, 0.01, 'remainingGrossPay');
+            });
+
+            QUnit.test('partial YTD with fewer periods remaining', function (assert) {
+                // $100k salary, $5k YTD, $24,500 goal, 26 periods, 20 remaining
+                const r = computeContribution(100000, 5000, 24500, 26, 20);
+                assert.strictEqual(r.remainingAmount, 19500, 'remainingAmount');
+                near(assert, r.perCheck, 975, 0.01, 'perCheck');
+                const expected = (19500 / ((100000 / 26) * 20)) * 100;
+                near(assert, r.requiredPercent, expected, 0.01, 'requiredPercent');
+            });
+
+            QUnit.test('goal already met — YTD equals goal', function (assert) {
+                const r = computeContribution(100000, 24500, 24500, 26, 10);
+                assert.strictEqual(r.requiredPercent, 0, 'requiredPercent is 0');
+                assert.strictEqual(r.perCheck, 0, 'perCheck is 0');
+                assert.strictEqual(r.remainingAmount, 0, 'remainingAmount is 0');
+            });
+
+            QUnit.test('goal already exceeded — YTD over goal', function (assert) {
+                const r = computeContribution(100000, 30000, 24500, 26, 10);
+                assert.strictEqual(r.requiredPercent, 0, 'requiredPercent is 0');
+                assert.strictEqual(r.perCheck, 0, 'perCheck is 0');
+            });
+
+            QUnit.test('required percent exceeds 100% (low salary / large goal)', function (assert) {
+                // $30k salary, $0 YTD, $24,500 goal, 26 periods, only 5 remaining
+                const r = computeContribution(30000, 0, 24500, 26, 5);
+                assert.ok(r.requiredPercent > 100, 'requiredPercent > 100');
+            });
+
+            QUnit.test('zero salary returns all zeros', function (assert) {
+                const r = computeContribution(0, 0, 24500, 26, 26);
+                assert.strictEqual(r.requiredPercent, 0);
+                assert.strictEqual(r.perCheck, 0);
+                assert.strictEqual(r.remainingGrossPay, 0);
+            });
+
+            QUnit.test('single period remaining', function (assert) {
+                const r = computeContribution(100000, 20000, 24500, 26, 1);
+                assert.strictEqual(r.remainingAmount, 4500, 'remainingAmount');
+                assert.strictEqual(r.perCheck, 4500, 'perCheck equals remainingAmount');
+                const expected = (4500 / (100000 / 26)) * 100;
+                near(assert, r.requiredPercent, expected, 0.001, 'requiredPercent');
+            });
+        });
+
+        // -----------------------------------------------------------------------
+        // computeScenario
+        // -----------------------------------------------------------------------
+
+        QUnit.module('computeScenario', function () {
+            QUnit.test('positive diff when chosen rate exceeds need', function (assert) {
+                // 50% of $50k remaining + $5k YTD = $30k vs $24,500 goal → +$5,500
+                const r = computeScenario(50, 50000, 5000, 24500);
+                near(assert, r.totalYearEnd, 30000, 0.01, 'totalYearEnd');
+                near(assert, r.diff, 5500, 0.01, 'diff');
+            });
+
+            QUnit.test('negative diff (shortfall) when rate is too low', function (assert) {
+                // 10% of $50k = $5k, $0 YTD → $5k vs $24,500 goal → -$19,500
+                const r = computeScenario(10, 50000, 0, 24500);
+                near(assert, r.totalYearEnd, 5000, 0.01, 'totalYearEnd');
+                near(assert, r.diff, -19500, 0.01, 'diff');
+            });
+
+            QUnit.test('zero diff when rate exactly meets goal', function (assert) {
+                // 100% of $24,500 remaining, $0 YTD = exactly goal
+                const r = computeScenario(100, 24500, 0, 24500);
+                near(assert, r.totalYearEnd, 24500, 0.001, 'totalYearEnd');
+                near(assert, r.diff, 0, 0.001, 'diff');
+            });
+
+            QUnit.test('YTD is included in totalYearEnd', function (assert) {
+                const r = computeScenario(0, 50000, 10000, 24500);
+                assert.strictEqual(r.totalYearEnd, 10000, 'totalYearEnd equals YTD when rate is 0');
+                assert.strictEqual(r.diff, 10000 - 24500);
+            });
+
+            QUnit.test('0% rate with no YTD', function (assert) {
+                const r = computeScenario(0, 50000, 0, 24500);
+                assert.strictEqual(r.totalYearEnd, 0);
+                assert.strictEqual(r.diff, -24500);
+            });
+        });
+
+        // -----------------------------------------------------------------------
+        // estimateRemainingPeriods
+        // -----------------------------------------------------------------------
+
+        QUnit.module('estimateRemainingPeriods', function () {
+            QUnit.test('mid-year (July 1) biweekly returns ~13 periods', function (assert) {
+                const july1 = new Date(2026, 6, 1);
+                const r = estimateRemainingPeriods(july1, 26);
+                assert.ok(r >= 12 && r <= 14, `got ${r}, expected 12–14`);
+            });
+
+            QUnit.test('late December returns at least 1', function (assert) {
+                const dec30 = new Date(2026, 11, 30);
+                const r = estimateRemainingPeriods(dec30, 26);
+                assert.ok(r >= 1, `got ${r}`);
+            });
+
+            QUnit.test('Dec 31 returns minimum of 1', function (assert) {
+                const dec31 = new Date(2026, 11, 31);
+                const r = estimateRemainingPeriods(dec31, 26);
+                assert.strictEqual(r, 1);
+            });
+
+            QUnit.test('early January returns close to full year of periods', function (assert) {
+                const jan2 = new Date(2026, 0, 2);
+                const r = estimateRemainingPeriods(jan2, 26);
+                assert.ok(r >= 24 && r <= 26, `got ${r}, expected 24–26`);
+            });
+
+            QUnit.test('monthly pay (12 periods), mid-year returns ~6', function (assert) {
+                const july1 = new Date(2026, 6, 1);
+                const r = estimateRemainingPeriods(july1, 12);
+                assert.ok(r >= 5 && r <= 7, `got ${r}, expected 5–7`);
+            });
+        });
+    </script>
+</body>
+</html>
